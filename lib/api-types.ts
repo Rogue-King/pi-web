@@ -2,6 +2,20 @@ import type { McpExposure, ResourceDiagnostic } from "@earendil-works/pi-coding-
 import type { McpImportNote } from "./mcp-import-core";
 import type { SubagentProfile } from "./subagents";
 
+export interface WorkflowProfilesResponse {
+  active?: string;
+  profiles: {
+    name: string;
+    source: string;
+    label?: string;
+    description?: string;
+    available: boolean;
+    error?: string;
+    warnings?: string[];
+  }[];
+  diagnostics: string[];
+}
+
 export interface SubagentProfilesResponse {
   profiles: SubagentProfile[];
 }

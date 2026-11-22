@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
-import { startRpcSession, getRpcSession, setRpcSessionTools } from "@/lib/rpc-manager";
+import { startRpcSession, getRpcSession, setRpcSessionTools, setRpcSessionProfile } from "@/lib/rpc-manager";
 import { cwdMissingBody, missingCwdFromBody } from "@/lib/missing-cwd";
 import { EXTENSION_REPORTED_CODE } from "@/lib/agent-client";
 
@@ -27,6 +27,12 @@ export async function POST(
 
     // Fast path: already-running session
     const existing = getRpcSession(id);
+    if (body.type === "set_profile") {
+      const filePath = existing?.sessionFile || await resolveSessionPath(id) || undefined;
+      if (!existing?.isAlive() && !filePath) return NextResponse.json({ error: "Session not found" }, { status: 404 });
+      const result = await setRpcSessionProfile(id, filePath, body.profile);
+      return NextResponse.json({ success: true, data: result });
+    }
     if (body.type === "set_tools") {
       const filePath = existing?.sessionFile || await resolveSessionPath(id) || undefined;
       if (!existing?.isAlive() && !filePath) {

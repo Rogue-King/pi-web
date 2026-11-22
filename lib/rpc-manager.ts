@@ -23,6 +23,7 @@ import {
 } from "./project-command-env";
 import { cacheSessionPath, catalogFirstMessage, getLatestModelChange, invalidateSessionListCache, invalidateSessionManagerCache, invalidateSessionPathCache, readLatestSessionEntryId, resolveSessionPath } from "./session-reader";
 import { computeLiveSessionTotalActiveMs } from "./session-timing";
+import { listSessionProfiles, prepareSessionProfile, preferSessionProfileExtension, readSessionProfile, validateSessionProfile } from "./session-profile";
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
 import { notifySessionComplete } from "./web-push";
 import { hasActiveSessionLivenessProvider } from "./session-liveness";
@@ -296,6 +297,7 @@ const COMMANDS_ALLOWED_DURING_SESSION_REPLACEMENT = new Set([
 ]);
 
 export interface RpcSessionStartOptions {
+  profile?: string;
   toolNames?: string[];
   initialModel?: { provider: string; modelId: string };
   allowInitialModelFallback?: boolean;
@@ -383,6 +385,7 @@ export class AgentSessionWrapper {
   private pendingPromptCount = 0;
   /** Prompts that reached send() and wait on the extensions or their admission, not counted yet. */
   private arrivingPromptCount = 0;
+  private bashExecution: Promise<void> | null = null;
   // Prompts waiting for the running compaction to finish (ParkedPrompt above).
   private parkedDuringCompaction: ParkedPrompt[] = [];
   private activeMutatingCommands = 0;
@@ -896,6 +899,18 @@ export class AgentSessionWrapper {
     await this.waitForExtensionsBound();
   }
 
+  stopUnreadyProfileStartup(): boolean {
+    if (this.extensionsBound && !this.extensionBindingError) return false;
+    // SAFETY: resource-policy checks inspect only the SDK custom-entry metadata.
+    const entries = this.inner.sessionManager.getEntries() as unknown as SessionEntry[];
+    if (this.chatOnly || this.sideChat || hasSubagentResourceSnapshot(entries)) throw new Error("Profiles are unavailable for this session");
+    if (this.isRunning()) throw new Error("Cannot replace profile startup while the session is running");
+    // Keep even a message-free session on its original id before disposing a stuck initializer.
+    this.persistBashOnlySession();
+    this.destroy();
+    return true;
+  }
+
   /**
    * The deferred model (#1240) the session still switches to once session_start has run, null
    * once it has. A model picked meanwhile (a session_start dialog may hold the binding, #1678)
@@ -1021,7 +1036,12 @@ export class AgentSessionWrapper {
 
   private async waitForExtensionsBound(): Promise<void> {
     try {
-      if (this.extensionBindingPromise) await this.extensionBindingPromise;
+      if (this.extensionBindingPromise && !this.extensionsBound) {
+        await Promise.race([
+          this.extensionBindingPromise,
+          this.disposed.then(() => { throw new Error("Session closed during startup"); }),
+        ]);
+      }
     } catch (err) {
       throw err instanceof Error ? err : new Error(String(err));
     }
@@ -1069,7 +1089,9 @@ export class AgentSessionWrapper {
     return type === "prompt"
       || type === "steer"
       || type === "follow_up"
-      || type === "get_commands";
+      || type === "get_commands"
+      || type === "get_profiles"
+      || type === "set_profile";
   }
 
   private async withFinalIdleReset<T>(operation: () => Promise<T>): Promise<T> {
@@ -1849,6 +1871,42 @@ export class AgentSessionWrapper {
         }));
       }
 
+      case "set_profile": {
+        const profile = validateSessionProfile(command.profile);
+        // SAFETY: the snapshot reader inspects only SDK custom-entry metadata.
+        const entries = this.inner.sessionManager.getEntries() as unknown as SessionEntry[];
+        if (this.chatOnly || this.sideChat || hasSubagentResourceSnapshot(entries) || !readSessionProfile(entries)
+          || !this.inner.extensionRunner.getRegisteredCommands().some((command) => command.invocationName === "profile")) {
+          throw new Error("Profiles are unavailable for this session");
+        }
+        const releaseAdmission = await this.acquirePromptAdmission();
+        this.pendingPromptCount += 1;
+        try {
+          // Do not tear down a turn, shell command or compaction to change its resources.
+          await this.bashExecution?.catch(() => undefined);
+          await this.inner.waitForIdle();
+          if (!this.isAlive()) throw new Error("Session closed before the profile could change");
+          if (readSessionProfile(this.inner.sessionManager.getEntries()) !== profile) {
+            await this.inner.prompt(`/profile use ${profile}`, { source: "rpc" });
+          }
+          if (readSessionProfile(this.inner.sessionManager.getEntries()) !== profile) throw new Error(`Unable to activate profile: ${profile}`);
+          return listSessionProfiles(this.inner.sessionManager, this.cwd);
+        } finally {
+          this.pendingPromptCount -= 1;
+          releaseAdmission();
+          this.resetIdleTimer();
+          this.notifyAgentRunCompleteIfIdle();
+        }
+      }
+
+      case "get_profiles": {
+        const hasProfileCommand = this.inner.extensionRunner.getRegisteredCommands()
+          .some((command) => command.invocationName === "profile");
+        return hasProfileCommand
+          ? listSessionProfiles(this.inner.sessionManager, this.cwd)
+          : { profiles: [], diagnostics: [] };
+      }
+
       case "get_commands": {
         const commands: SlashCommandInfo[] = [];
         for (const registered of this.inner.extensionRunner.getRegisteredCommands()) {
@@ -1943,6 +2001,8 @@ export class AgentSessionWrapper {
         // pi counts a command as running only once executeBash starts; the hook comes first.
         this.userBashPending = true;
         const liveOutput = this.createBashOutputSnapshots(bashCommand);
+        let finishBash!: () => void;
+        this.bashExecution = new Promise<void>((resolve) => { finishBash = resolve; });
         try {
           // pi's TUI and RPC mode ask `user_bash` handlers first: one may run the
           // command itself (a sandbox, a remote host) or hand over how to. A handler
@@ -1976,6 +2036,8 @@ export class AgentSessionWrapper {
         } finally {
           this.userBashPending = false;
           liveOutput.stop();
+          this.bashExecution = null;
+          finishBash();
           // A run that ended while the command went on reports its end now (isRunning() held it).
           this.notifyAgentRunCompleteIfIdle();
           this.resetIdleTimer();
@@ -3158,6 +3220,23 @@ export async function setRpcSessionTools(
   return { session: started.session, sessionId: started.realSessionId, recreated: true };
 }
 
+export async function setRpcSessionProfile(sessionId: string, sessionFile: string | undefined, requestedProfile: unknown): Promise<unknown> {
+  const profile = validateSessionProfile(requestedProfile);
+  const existing = getRpcSession(sessionId);
+  if (existing?.isAlive()) {
+    sessionFile ||= existing.sessionFile;
+    if (!existing.stopUnreadyProfileStartup()) return existing.send({ type: "set_profile", profile });
+  }
+  const pending = closingRpcSessionWait(sessionId) ?? getLocks().get(sessionId);
+  if (pending) {
+    await pending.catch(() => undefined);
+    return setRpcSessionProfile(sessionId, sessionFile, profile);
+  }
+  if (!sessionFile) throw new Error("Session not found");
+  const started = await startRpcSession(sessionId, sessionFile, undefined, { profile });
+  return started.session.send({ type: "get_profiles" });
+}
+
 function runtimeMessageText(entry: SessionMessageEntry): string {
   if (entry.message.role === "bashExecution") return "";
   const content = entry.message.content;
@@ -3500,6 +3579,7 @@ export async function startRpcSession(
   const chatOnly = pinnedToolNames?.length === 0 && !subagentLoadsResources;
   // A side chat (ADR 0007) starts as a normal session, or as Chat only, with fewer tools.
   const isSideChat = hasSideMetadata(sessionEntries);
+  if (options.profile !== undefined && (subagentResources || chatOnly || isSideChat)) throw new Error("Profiles are unavailable for this session");
   if (isSideChat && !readSideRelation(sessionEntries)) throw new Error("Invalid side chat metadata");
   const sideChatTools = isSideChat && !chatOnly;
   const selectedToolNames = sideChatTools
@@ -3511,7 +3591,10 @@ export async function startRpcSession(
   const starting = (async () => {
     // Some extensions access the SDK's global theme even outside the terminal UI.
     if (!chatOnly) initTheme();
-    const agentDir = getAgentDir();
+    const profile = !subagentResources && !chatOnly
+      ? await prepareSessionProfile({ agentDir: getAgentDir(), cwd: sessionCwd, sessionManager, profile: options.profile })
+      : undefined;
+    const agentDir = profile?.agentDir ?? getAgentDir();
 
     // Determine which tools to pass based on requested toolNames.
     // Since v0.68.0, session creation expects string[] tool names instead of Tool[] instances.
@@ -3613,6 +3696,7 @@ export async function startRpcSession(
         : {
             extensionFactories: [
               llamaCppExtension,
+              ...(profile ? [profile.extension] : []),
               ...(builtins?.extensions ?? []),
               createReadOnlyMcpPolicyExtension(),
               createProjectCommandBashExtension({
@@ -3627,7 +3711,9 @@ export async function startRpcSession(
               ),
             ],
             extensionsOverride: (base) => preferUserPowerShellExtension(
-              preferUserBashExtension(preferPiWebSubagentExtension(base)),
+              preferUserBashExtension(preferPiWebSubagentExtension(
+                profile ? preferSessionProfileExtension(base) : base,
+              )),
             ),
           },
       ...(trustReloadOptions ? { resourceLoaderReloadOptions: trustReloadOptions } : {}),

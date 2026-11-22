@@ -27,6 +27,7 @@ import {
 import { clearDraft, getDraft, parkedNewSessionDraftKey, rekeyDraft, restoreDraftSubmission, setDraft, type ChatDraft } from "@/lib/draft-store";
 import { getPreferredToolPreset, setPreferredToolPreset } from "@/lib/tool-preset-preference";
 import { CONFIGURED_TOOL_PRESET, getPresetFromToolNames, getToolNamesForPreset, type ToolEntry, type ToolPreset } from "@/lib/tool-presets";
+import type { WorkflowProfilesResponse } from "@/lib/api-types";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { mergeSessionStats, type SessionFileStats } from "@/lib/session-stats";
 import { formatSessionSummary } from "@/lib/session-stats-format";
@@ -1087,7 +1088,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, []);
 
-  const ensureNewSession = useCallback(async () => {
+  const ensureNewSession = useCallback(async (profile?: string) => {
     if (sessionIdRef.current) return sessionIdRef.current;
     if (!isNew || !newSessionCwd) return sessionIdRef.current;
     if (ensuringNewSessionRef.current) return ensuringNewSessionRef.current;
@@ -1108,6 +1109,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         body: JSON.stringify({
           cwd: newSessionCwd,
           type: "ensure_session",
+          ...(profile !== undefined ? { profile } : {}),
           ...(toolNames !== undefined ? { toolNames } : {}),
           ...(selectedModel ? { provider: selectedModel.provider, modelId: selectedModel.modelId } : {}),
           ...(selectedThinkingLevel
@@ -1227,6 +1229,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     return load;
   }, [ensureNewSession, replaceSlashCommands, withSessionStartStream]);
 
+  const loadProfiles = useCallback(async (): Promise<WorkflowProfilesResponse> => {
+    const sid = sessionIdRef.current;
+    const query = sid ? `sessionId=${encodeURIComponent(sid)}` : `cwd=${encodeURIComponent(newSessionCwd ?? "")}`;
+    const response = await fetch(`/api/profiles?${query}`);
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? "Unable to load profiles");
+    return result;
+  }, [newSessionCwd]);
+
   const loadSlashCommands = useCallback(async () => (await requestSlashCommands()) ?? [], [requestSlashCommands]);
 
   // The list a bare /mcp is decided by: the request under way (the palette starts
@@ -1332,7 +1343,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               subagentsActive: reply.subagentsActive === true,
             },
           };
-        } catch {}
+        } catch {
+          // Best-effort debug telemetry must not change the lease result.
+        }
       }
     })();
     leaseRequestRef.current = request;
@@ -3134,6 +3147,23 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     reloadModelsQuietly();
   }, [addNotice, displayThinkingLevel, handleThinkingLevelChange, reloadModelsQuietly, saveDefaultPreferences]);
 
+  const handleProfileChange = useCallback(async (profile: string) => {
+    const sid = sessionIdRef.current ?? await ensureNewSession(profile);
+    if (!sid) throw new Error("No active session");
+    await sendAgentCommand(sid, { type: "set_profile", profile });
+    if (!sessionHookMountedRef.current || sessionIdRef.current !== sid) return;
+    clearSlashCommands();
+    const [state] = await Promise.all([
+      sendAgentCommand<AgentStateResponse>(sid, { type: "get_state" }),
+      loadTools(sid),
+    ]);
+    if (!sessionHookMountedRef.current || sessionIdRef.current !== sid) return;
+    setSystemPrompt(state.systemPrompt ?? "");
+    syncLiveModel(state);
+    setExtensionStatuses(state.extensionStatuses ?? []);
+    setExtensionWidgets(state.extensionWidgets ?? []);
+  }, [clearSlashCommands, ensureNewSession, loadTools, syncLiveModel]);
+
   const handleToolPresetChange = useCallback(async (preset: ToolPreset) => {
     const toolNames = getToolNamesForPreset(preset);
     setPreferredToolPreset(preset);
@@ -3639,7 +3669,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     cancelEdit: editEntryId ? cancelEdit : undefined,
     addNotice,
     setNoticePaused: setPausedNoticeId,
-    handleToolPresetChange, handleThinkingLevelChange, handleSetDefaultModel, handleSetDefaultThinkingLevel, loadTools, loadSlashCommands, loadAllModels, setActiveLeafId, setData, setMessages, loadContext,
+    handleProfileChange, handleToolPresetChange, handleThinkingLevelChange, handleSetDefaultModel, handleSetDefaultThinkingLevel, loadTools, loadSlashCommands, loadProfiles, loadAllModels, setActiveLeafId, setData, setMessages, loadContext,
     scrollToBottom, scrollUserMsgToTop, scrollToMessage,
     dispatch, setAgentRunning, setForkingEntryId,
     bashRunning, pendingBash,

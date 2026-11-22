@@ -19,6 +19,23 @@ const { ModelSelector } = await jiti.import("./ModelSelector.tsx");
 const { clearDraft, getDraft, mergeRestoredSubmissionDraft, mergeRestoredSubmissionText, rekeyDraft, setDraft } = await jiti.import("@/lib/draft-store");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 
+test("profile picker stays available beside tool and compact controls, including while running", () => {
+  const render = (props) => renderToStaticMarkup(React.createElement(I18nProvider, null,
+    React.createElement(ChatInput, {
+      onSend() {}, onAbort() {}, onCompact() {}, onToolPresetChange() {},
+      onLoadProfiles: async () => ({ active: "pair", profiles: [], diagnostics: [] }),
+      onProfileChange: async () => {},
+      isStreaming: false, ...props,
+    })));
+  const html = render({});
+  assert.match(html, /aria-label="Switch profile"/);
+  assert.ok(html.indexOf('aria-label="Change tool preset"') < html.indexOf('aria-label="Switch profile"'));
+  assert.ok(html.indexOf('aria-label="Switch profile"') < html.indexOf('aria-label="Compact context"'));
+  assert.match(render({ isStreaming: true }), /aria-label="Switch profile"/);
+  assert.doesNotMatch(render({ onLoadProfiles: undefined }), /aria-label="Switch profile"/);
+  assert.doesNotMatch(render({ compact: true }), /aria-label="Switch profile"/);
+});
+
 test("preserves pasted HTML links as Markdown without changing plain text layout", () => {
   const link = (label, href, occurrence = 0) => ({ label, href, occurrence });
 

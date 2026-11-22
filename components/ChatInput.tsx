@@ -2,7 +2,8 @@
 
 import React, { memo, useRef, useState, useCallback, useEffect, useLayoutEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
-import type { SkillsResponse } from "@/lib/api-types";
+import { ProfileSelector } from "./ProfileSelector";
+import type { WorkflowProfilesResponse, SkillsResponse } from "@/lib/api-types";
 import type { TextContent, UserMessage } from "@/lib/types";
 import {
   clearDraft,
@@ -81,6 +82,8 @@ interface Props {
   compactError?: string | null;
   onDismissCompactError?: () => void;
   compactResult?: CompactResultInfo | null;
+  onLoadProfiles?: () => Promise<WorkflowProfilesResponse>;
+  onProfileChange?: (name: string) => Promise<void>;
   toolPreset?: ToolPreset;
   onToolPresetChange?: (preset: ToolPreset) => void;
   thinkingLevel?: "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -722,7 +725,7 @@ export function ModelScopeWarningBanner({ warnings }: { warnings?: string[] }) {
 export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatInput({
   onSend, onAbort, onSteer, onSideChat, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, missingCwd, modelScopeWarnings, allModelList, onLoadAllModels, onModelChange, modelSwitching,
   defaultModel, onSetDefaultModel,
-  onCompact, onAbortCompaction, isCompacting, compactError, onDismissCompactError, compactResult, toolPreset, onToolPresetChange,
+  onCompact, onAbortCompaction, isCompacting, compactError, onDismissCompactError, compactResult, toolPreset, onToolPresetChange, onLoadProfiles, onProfileChange,
   thinkingLevel, isAutoThinkingSelection = false, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   savedDefaultThinkingLevel, onSetDefaultThinkingLevel,
   retryInfo, queuedMessages, inputHistory = [], onRecallQueue,
@@ -2914,6 +2917,16 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                   </div>
                 )}
               </div>
+            )}
+
+            {onLoadProfiles && onProfileChange && (
+              <ProfileSelector
+                key={draftKey}
+                loadProfiles={onLoadProfiles}
+                onSelect={onProfileChange}
+                showLabel={!isMobile || controlsMenuOpen}
+                isStrayClick={isStrayClick}
+              />
             )}
 
             {(!isStreaming || isCompacting) && onCompact && (
