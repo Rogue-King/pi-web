@@ -1,19 +1,19 @@
 # Release Checklist
 
-`@rogue-king/pi-web` follows upstream’s npm release model: build from source, then publish the package with `.next/` inside it. Do not commit `.next/` or publish from a checkout that has run the app. Use a clean checkout of the `magi` branch.
+The [release workflow](../.github/workflows/publish.yml) runs when a matching stable version tag is pushed from `magi`. It tests and builds from a clean checkout, then publishes the verified npm tarball with `.next/` inside. Do not commit the build output.
 
 ## First publication
 
-Log in to npm as a maintainer with publish access to `@rogue-king`. The package needs to exist before you can configure its Trusted Publisher:
+For the first release of `@rogue-king/pi-web`, create a **new**, short-lived npm granular access token with write access to the `@rogue-king` scope and bypass 2FA enabled for CI. Save it as the `NPM_TOKEN` Actions secret in `Rogue-King/pi-web`. Do not put it in Git or paste it into chat. If Actions are disabled on the fork, enable them in its Actions tab.
+
+When `magi` contains the release workflow and is at version `0.18.1`, tag and push that checked-out commit:
 
 ```bash
-npm login --registry=https://registry.npmjs.org/
-npm ci --include=dev
-npm test
-npm run build
-npm pack
-npm publish ./rogue-king-pi-web-0.18.1.tgz --access public
+git tag -a v0.18.1 -m "Release v0.18.1"
+git push origin magi refs/tags/v0.18.1
 ```
+
+## Subsequent releases
 
 On npmjs.com, open `@rogue-king/pi-web` → Settings → Trusted Publishing and add GitHub Actions:
 
@@ -23,20 +23,13 @@ On npmjs.com, open `@rogue-king/pi-web` → Settings → Trusted Publishing and 
 - Environment: leave empty
 - Permission: `npm publish`
 
-Configure this when the next release is ready to push: npm expires a new connection if its first successful CI publication does not happen within two days. Do not push a release tag to republish the manually published version.
+Delete the `NPM_TOKEN` Actions secret and revoke the bootstrap token. Configure Trusted Publishing when the next release is ready: npm expires a new connection if its first successful CI publication does not happen within two days.
 
-## Subsequent releases
-
-Verify the checkout and tests, then bump the version and push only the new tag:
+From a clean `magi` checkout:
 
 ```bash
-git status --short --branch
-npm ci --include=dev
-npm test
 npm run release                  # patch release; creates a version commit and tag
-git push origin magi v<version>
+git push origin magi refs/tags/v<version>
 ```
 
-`.github/workflows/publish.yml` checks that the tag matches the package version, runs `npm ci --include=dev` and `npm run build`, then publishes to npm with OIDC. No npm token is needed in GitHub. After publishing, create the GitHub Release for the tag so the in-app release link works.
-
-Confirm the version with `npm view @rogue-king/pi-web@<version> version`. Magi can then fetch a compatible release with `bun update @rogue-king/pi-web` once it declares the dependency.
+Confirm publication with `npm view @rogue-king/pi-web@<version> version`. Create a GitHub Release for the tag if you want the in-app release link to show release notes.
