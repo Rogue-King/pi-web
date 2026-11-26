@@ -1,6 +1,6 @@
 {
-  "name": "@rogue-king/pi-web",
-  "version": "0.18.1",
+  "name": "@rogueking/pi-web",
+  "version": "0.18.2",
   "description": "Web UI for the pi coding agent",
   "homepage": "https://github.com/Rogue-King/pi-web#readme",
   "repository": {

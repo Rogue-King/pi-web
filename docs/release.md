@@ -4,18 +4,18 @@ The [release workflow](../.github/workflows/publish.yml) runs when a matching st
 
 ## First publication
 
-For the first release of `@rogue-king/pi-web`, create a **new**, short-lived npm granular access token with write access to the `@rogue-king` scope and bypass 2FA enabled for CI. Save it as the `NPM_TOKEN` Actions secret in `Rogue-King/pi-web`. Do not put it in Git or paste it into chat. If Actions are disabled on the fork, enable them in its Actions tab.
+For the first release of `@rogueking/pi-web`, create a **new**, short-lived npm granular access token with write access to the `@rogueking` scope and bypass 2FA enabled for CI. Save it as the `NPM_TOKEN` Actions secret in `Rogue-King/pi-web`. Do not put it in Git or paste it into chat. If Actions are disabled on the fork, enable them in its Actions tab.
 
-When `magi` contains the release workflow and is at version `0.18.1`, tag and push that checked-out commit:
+When `magi` contains the release workflow and is at version `0.18.2`, tag and push that checked-out commit:
 
 ```bash
-git tag -a v0.18.1 -m "Release v0.18.1"
-git push origin magi refs/tags/v0.18.1
+git tag -a v0.18.2 -m "Release v0.18.2"
+git push origin magi refs/tags/v0.18.2
 ```
 
 ## Subsequent releases
 
-On npmjs.com, open `@rogue-king/pi-web` → Settings → Trusted Publishing and add GitHub Actions:
+On npmjs.com, open `@rogueking/pi-web` → Settings → Trusted Publishing and add GitHub Actions:
 
 - Organization or user: `Rogue-King`
 - Repository: `pi-web`
@@ -32,4 +32,4 @@ npm run release                  # patch release; creates a version commit and t
 git push origin magi refs/tags/v<version>
 ```
 
-Confirm publication with `npm view @rogue-king/pi-web@<version> version`. Create a GitHub Release for the tag if you want the in-app release link to show release notes.
+Confirm publication with `npm view @rogueking/pi-web@<version> version`. Create a GitHub Release for the tag if you want the in-app release link to show release notes.

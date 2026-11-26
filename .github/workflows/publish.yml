@@ -24,7 +24,7 @@ jobs:
       - name: Validate release tag
         run: |
           git merge-base --is-ancestor HEAD origin/magi
-          test "$(node -p "require('./package.json').name")" = "@rogue-king/pi-web"
+          test "$(node -p "require('./package.json').name")" = "@rogueking/pi-web"
           version=$(node -p "require('./package.json').version")
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || "$GITHUB_REF_NAME" != "v$version" ]]; then
             echo "::error::Expected a stable version and its matching tag"
@@ -43,7 +43,7 @@ jobs:
         run: |
           mkdir release
           npm pack --ignore-scripts --pack-destination release
-          tar -xOzf "release/rogue-king-pi-web-${GITHUB_REF_NAME#v}.tgz" package/.next/BUILD_ID | grep -q .
+          tar -xOzf "release/rogueking-pi-web-${GITHUB_REF_NAME#v}.tgz" package/.next/BUILD_ID | grep -q .
       - uses: actions/upload-artifact@v4
         with:
           name: npm-package
@@ -68,7 +68,7 @@ jobs:
         with:
           name: npm-package
       - name: Publish to npm
-        run: npm publish "./rogue-king-pi-web-${GITHUB_REF_NAME#v}.tgz" --access public --ignore-scripts
+        run: npm publish "./rogueking-pi-web-${GITHUB_REF_NAME#v}.tgz" --access public --ignore-scripts
         env:
           # Only needed to bootstrap the package; remove after setting up OIDC.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
