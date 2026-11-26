@@ -9,6 +9,11 @@ const ENTRY_TYPE = "pi-profile-switch:profile";
 const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 let cleanup: Promise<void> | undefined;
 
+function createProfileLoader() {
+  // Next starts in the installed package root; webpack embeds the build path in import.meta.url.
+  return createJiti(join(process.cwd(), "package.json"));
+}
+
 export function readSessionProfile(entries: readonly { type: string; customType?: string; data?: unknown }[]): string | undefined {
   const entry = entries.findLast((entry) => entry.type === "custom" && entry.customType === ENTRY_TYPE);
   if (!entry) return undefined;
@@ -27,7 +32,7 @@ export function validateSessionProfile(profile: unknown): string {
 export async function listSessionProfiles(sessionManager: SessionManager | undefined, cwd: string): Promise<WorkflowProfilesResponse> {
   const active = (sessionManager && readSessionProfile(sessionManager.getEntries())) ?? process.env.PI_WEB_PROFILE;
   if (!active) return { profiles: [], diagnostics: [] };
-  const jiti = createJiti(import.meta.url);
+  const jiti = createProfileLoader();
   const { listProfiles } = await jiti.import<typeof import("pi-profile-switch/src/switching/list-profiles.ts")>("pi-profile-switch/src/switching/list-profiles.ts");
   const { getAgentDir } = await import("@earendil-works/pi-coding-agent");
   const diagnostics: string[] = [];
@@ -56,7 +61,7 @@ export async function prepareSessionProfile(options: {
   validateSessionProfile(selected);
 
   // shortcut: upstream has no SDK export; the pinned package carries the explicit runtime/state patch.
-  const jiti = createJiti(import.meta.url);
+  const jiti = createProfileLoader();
   const { resolveInitialProfile } = await jiti.import<typeof import("pi-profile-switch/src/launcher/initial-profile.ts")>("pi-profile-switch/src/launcher/initial-profile.ts");
   const { generateRuntimeDir } = await jiti.import<typeof import("pi-profile-switch/src/settings-generator.ts")>("pi-profile-switch/src/settings-generator.ts");
   const { ensureStarterAssets } = await jiti.import<typeof import("pi-profile-switch/src/starter-assets.ts")>("pi-profile-switch/src/starter-assets.ts");
